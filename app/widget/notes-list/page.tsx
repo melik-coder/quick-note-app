@@ -10,22 +10,6 @@ interface Note {
   updatedAt: string;
 }
 
-interface ToolOutput {
-  notes: Note[];
-  count: number;
-  query?: string | null;
-}
-
-// window.openai tipi
-declare global {
-  interface Window {
-    openai?: {
-      toolOutput?: ToolOutput;
-      callTool?: (toolName: string, params: Record<string, unknown>) => void;
-    };
-  }
-}
-
 export default function NotesListWidget() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [query, setQuery] = useState<string | null>(null);
@@ -34,8 +18,9 @@ export default function NotesListWidget() {
   useEffect(() => {
     // ChatGPT'den gelen veriyi oku
     const loadData = () => {
-      if (window.openai?.toolOutput) {
-        const output = window.openai.toolOutput;
+      const openai = window.openai;
+      if (openai?.toolOutput) {
+        const output = openai.toolOutput as { notes?: Note[]; query?: string | null };
         setNotes(output.notes || []);
         setQuery(output.query || null);
         setIsLoaded(true);

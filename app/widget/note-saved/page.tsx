@@ -9,28 +9,15 @@ interface Note {
   createdAt: string;
 }
 
-interface ToolOutput {
-  note: Note;
-  success: boolean;
-}
-
-declare global {
-  interface Window {
-    openai?: {
-      toolOutput?: ToolOutput;
-      callTool?: (toolName: string, params: Record<string, unknown>) => void;
-    };
-  }
-}
-
 export default function NoteSavedWidget() {
   const [note, setNote] = useState<Note | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
     const loadData = () => {
-      if (window.openai?.toolOutput) {
-        const output = window.openai.toolOutput;
+      const openai = window.openai;
+      if (openai?.toolOutput) {
+        const output = openai.toolOutput as { note?: Note; success?: boolean };
         if (output.success && output.note) {
           setNote(output.note);
         }
@@ -49,8 +36,9 @@ export default function NoteSavedWidget() {
   }, []);
 
   const handleViewAll = () => {
-    if (window.openai?.callTool) {
-      window.openai.callTool("list_notes", {});
+    const openai = window.openai;
+    if (openai?.callTool) {
+      openai.callTool("list_notes", {});
     }
   };
 
