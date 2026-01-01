@@ -1,6 +1,3 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
 import { getBaseUrl } from "@/lib/base-url";
 import {
   saveNote,
@@ -10,231 +7,238 @@ import {
   getRecentNotes,
 } from "@/lib/notes-store";
 
-// MCP Server oluştur
-function createMcpServer() {
-  const server = new McpServer({
-    name: "quick-note",
-    version: "1.0.0",
-  });
-
-  const baseUrl = getBaseUrl();
-
-  // ===== RESOURCES (Widget HTML) =====
-
-  // Not listesi widget'ı
-  server.resource("notes-list-widget", `${baseUrl}/widget/notes-list`, {
-    mimeType: "text/html+skybridge",
-    description: "Widget showing list of saved notes",
-  });
-
-  // Not kaydetme onay widget'ı
-  server.resource("note-saved-widget", `${baseUrl}/widget/note-saved`, {
-    mimeType: "text/html+skybridge",
-    description: "Widget confirming note was saved",
-  });
-
-  // ===== TOOLS =====
-
-  // 1. Not Kaydet
-  server.tool(
-    "save_note",
-    "Save a new note or code snippet with optional tags",
-    {
-      content: z.string().describe("The note content or code snippet to save"),
-      tags: z
-        .array(z.string())
-        .optional()
-        .describe("Tags to categorize the note (e.g., javascript, todo, idea)"),
-    },
-    async ({ content, tags = [] }) => {
-      const note = await saveNote(content, tags);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Note saved successfully with ID: ${note.id}`,
-          },
-        ],
-        structuredContent: {
-          note,
-          success: true,
-        },
-        _meta: {
-          "openai/outputTemplate": `${baseUrl}/widget/note-saved`,
-          "openai/toolInvocation/invoking": "Saving note...",
-          "openai/toolInvocation/invoked": "Note saved",
-        },
-      };
-    }
-  );
-
-  // 2. Tüm Notları Listele
-  server.tool(
-    "list_notes",
-    "List all saved notes, optionally filtered by search query",
-    {
-      query: z
-        .string()
-        .optional()
-        .describe("Search query to filter notes by content or tags"),
-      limit: z
-        .number()
-        .optional()
-        .describe("Maximum number of notes to return (default: 10)"),
-    },
-    async ({ query, limit = 10 }) => {
-      let notes;
-
-      if (query) {
-        notes = await searchNotes(query);
-      } else {
-        notes = await getAllNotes();
-      }
-
-      notes = notes.slice(0, limit);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              notes.length > 0
-                ? `Found ${notes.length} note(s)`
-                : "No notes found",
-          },
-        ],
-        structuredContent: {
-          notes,
-          count: notes.length,
-          query: query || null,
-        },
-        _meta: {
-          "openai/outputTemplate": `${baseUrl}/widget/notes-list`,
-          "openai/toolInvocation/invoking": "Loading notes...",
-          "openai/toolInvocation/invoked": `${notes.length} notes loaded`,
-        },
-      };
-    }
-  );
-
-  // 3. Son Notları Getir
-  server.tool(
-    "get_recent_notes",
-    "Get the most recently saved notes",
-    {
-      count: z
-        .number()
-        .optional()
-        .describe("Number of recent notes to retrieve (default: 5)"),
-    },
-    async ({ count = 5 }) => {
-      const notes = await getRecentNotes(count);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              notes.length > 0
-                ? `Retrieved ${notes.length} recent note(s)`
-                : "No notes saved yet",
-          },
-        ],
-        structuredContent: {
-          notes,
-          count: notes.length,
-        },
-        _meta: {
-          "openai/outputTemplate": `${baseUrl}/widget/notes-list`,
-          "openai/toolInvocation/invoking": "Loading recent notes...",
-          "openai/toolInvocation/invoked": `${notes.length} notes loaded`,
-        },
-      };
-    }
-  );
-
-  // 4. Not Sil
-  server.tool(
-    "delete_note",
-    "Delete a note by its ID",
-    {
-      id: z.string().describe("The ID of the note to delete"),
-    },
-    async ({ id }) => {
-      const success = await deleteNote(id);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: success
-              ? `Note ${id} deleted successfully`
-              : `Note ${id} not found`,
-          },
-        ],
-        structuredContent: {
-          deleted: success,
-          noteId: id,
-        },
-      };
-    }
-  );
-
-  return server;
-}
-
-// HTTP Handler
-async function handleMcpRequest(request: Request): Promise<Response> {
-  const server = createMcpServer();
-
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // Stateless mode
-  });
-
-  await server.connect(transport);
-
-  const response = await transport.handleRequest(request);
-
-  return response;
-}
-
 // CORS headers
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id",
 };
 
-// GET - Health check
+// GET - Health check & server info
 export async function GET() {
-  return new Response("Quick Note MCP Server is running", {
-    status: 200,
-    headers: corsHeaders,
-  });
+  return new Response(
+    JSON.stringify({
+      name: "quick-note",
+      version: "1.0.0",
+      status: "running",
+      tools: ["save_note", "list_notes", "get_recent_notes", "delete_note"],
+      endpoints: {
+        mcp: "/mcp",
+        widgets: {
+          notesList: "/widget/notes-list",
+          noteSaved: "/widget/note-saved",
+        },
+      },
+    }),
+    {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    }
+  );
 }
 
-// POST - MCP requests
+// POST - Handle MCP JSON-RPC requests
 export async function POST(request: Request) {
   try {
-    const response = await handleMcpRequest(request);
+    const body = await request.json();
 
-    // CORS headers ekle
-    const headers = new Headers(response.headers);
-    Object.entries(corsHeaders).forEach(([key, value]) => {
-      headers.set(key, value);
-    });
+    // JSON-RPC request handling
+    const { method, params, id } = body;
 
-    return new Response(response.body, {
-      status: response.status,
-      headers,
-    });
+    let result;
+
+    switch (method) {
+      case "initialize":
+        result = {
+          protocolVersion: "2024-11-05",
+          capabilities: {
+            tools: {},
+          },
+          serverInfo: {
+            name: "quick-note",
+            version: "1.0.0",
+          },
+        };
+        break;
+
+      case "tools/list":
+        result = {
+          tools: [
+            {
+              name: "save_note",
+              description: "Save a new note or code snippet with optional tags",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  content: {
+                    type: "string",
+                    description: "The note content or code snippet to save",
+                  },
+                  tags: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Tags to categorize the note",
+                  },
+                },
+                required: ["content"],
+              },
+            },
+            {
+              name: "list_notes",
+              description: "List all saved notes, optionally filtered by search query",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  query: {
+                    type: "string",
+                    description: "Search query to filter notes",
+                  },
+                  limit: {
+                    type: "number",
+                    description: "Maximum number of notes to return",
+                  },
+                },
+              },
+            },
+            {
+              name: "get_recent_notes",
+              description: "Get the most recently saved notes",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  count: {
+                    type: "number",
+                    description: "Number of recent notes to retrieve",
+                  },
+                },
+              },
+            },
+            {
+              name: "delete_note",
+              description: "Delete a note by its ID",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  id: {
+                    type: "string",
+                    description: "The ID of the note to delete",
+                  },
+                },
+                required: ["id"],
+              },
+            },
+          ],
+        };
+        break;
+
+      case "tools/call":
+        const { name, arguments: args } = params;
+        const baseUrl = getBaseUrl();
+
+        switch (name) {
+          case "save_note":
+            const savedNote = await saveNote(args.content, args.tags || []);
+            result = {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    message: "Note saved successfully",
+                    note: savedNote,
+                    success: true,
+                  }),
+                },
+              ],
+            };
+            break;
+
+          case "list_notes":
+            let notes = args.query
+              ? await searchNotes(args.query)
+              : await getAllNotes();
+            notes = notes.slice(0, args.limit || 10);
+            result = {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    message: `Found ${notes.length} note(s)`,
+                    notes,
+                    count: notes.length,
+                  }),
+                },
+              ],
+            };
+            break;
+
+          case "get_recent_notes":
+            const recentNotes = await getRecentNotes(args.count || 5);
+            result = {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    message: `Retrieved ${recentNotes.length} recent note(s)`,
+                    notes: recentNotes,
+                    count: recentNotes.length,
+                  }),
+                },
+              ],
+            };
+            break;
+
+          case "delete_note":
+            const deleted = await deleteNote(args.id);
+            result = {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    message: deleted ? "Note deleted successfully" : "Note not found",
+                    deleted,
+                    noteId: args.id,
+                  }),
+                },
+              ],
+            };
+            break;
+
+          default:
+            throw new Error(`Unknown tool: ${name}`);
+        }
+        break;
+
+      default:
+        result = { error: `Unknown method: ${method}` };
+    }
+
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result,
+      }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   } catch (error) {
     console.error("MCP Error:", error);
-    return new Response(JSON.stringify({ error: "Internal server error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32603,
+          message: error instanceof Error ? error.message : "Internal error",
+        },
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
   }
 }
 
